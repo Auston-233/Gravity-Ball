@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>重力滚球历险记 (Neon Gravity Marble)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* 禁用页面滚动与双击缩放 */
+        html, body {
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            overflow: hidden;
+            background-color: #0b0f19;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            height: 100%;
+            width: 100%;
+        }
+
+        /* 霓虹发光特效 */
+        .neon-text-blue {
+            text-shadow: 0 0 8px rgba(56, 189, 248, 0.8), 0 0 16px rgba(56, 189, 248, 0.4);
+        }
+        .neon-box-blue {
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.3), inset 0 0 15px rgba(56, 189, 248, 0.2);
+        }
+        .neon-button {
+            background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.5);
+        }
+        .neon-button:active {
+            transform: scale(0.96);
+            box-shadow: 0 0 8px rgba(6, 182, 212, 0.8);
+        }
+
+        /* 虚拟摇杆底座 */
+        .joystick-base {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(56, 189, 248, 0.3);
+            backdrop-filter: blur(4px);
+        }
+        .joystick-stick {
+            background: radial-gradient(circle, #38bdf8 0%, #0284c7 100%);
+            box-shadow: 0 0 10px #38bdf8;
+        }
+
+        /* Canvas 防模糊自适应 */
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+
+        /* 模态框动画 */
+        @keyframes modalPop {
+            0% { transform: scale(0.85); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop {
+            animation: modalPop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen w-screen text-white select-none">
+
+    <!-- 顶部 UI 栏 -->
+    <header class="h-16 px-4 flex items-center justify-between border-b border-slate-800/80 bg-slate-900/60 backdrop-blur z-10 shrink-0">
+        <!-- 关卡与得分 -->
+        <div class="flex items-center space-x-3">
+            <div class="bg-slate-800/80 border border-slate-700 px-3 py-1 rounded-full flex items-center space-x-1.5">
+                <i class="fa-solid fa-layer-group text-cyan-400 text-xs"></i>
+                <span id="level-display" class="font-bold text-sm tracking-wide text-cyan-400">STAGE 1</span>
+            </div>
+            <div class="flex items-center space-x-1 text-amber-400 font-bold text-sm">
+                <i class="fa-solid fa-star"></i>
+                <span id="score-display">0/0</span>
+            </div>
+        </div>
+
+        <!-- 计时器与暂停按钮 -->
+        <div class="flex items-center space-x-3">
+            <div class="bg-slate-800/80 border border-slate-700 px-3 py-1 rounded-full flex items-center space-x-1.5 font-mono text-xs">
+                <i class="fa-solid fa-stopwatch text-slate-400"></i>
+                <span id="timer-display" class="text-slate-200">00:00.0</span>
+            </div>
+            <button id="btn-pause" class="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 active:bg-slate-700">
+                <i class="fa-solid fa-pause text-xs"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- 游戏 Canvas 区域 -->
+    <main class="flex-1 relative w-full h-full overflow-hidden flex items-center justify-center bg-slate-950">
+        <canvas id="gameCanvas" class="w-full h-full"></canvas>
+
+        <!-- 触控模式时的虚拟摇杆 (传感器开启时自动隐去，未开启或桌面端显示) -->
+        <div id="joystick-container" class="absolute bottom-6 left-6 w-32 h-32 joystick-base rounded-full hidden flex items-center justify-center pointer-events-auto opacity-70 active:opacity-100 transition-opacity">
+            <div id="joystick-stick" class="w-12 h-12 joystick-stick rounded-full transition-transform duration-75"></div>
+        </div>
+
+        <!-- 设备倾斜感应调试指示器 (小型) -->
+        <div id="tilt-indicator" class="absolute top-3 right-3 bg-slate-900/60 border border-slate-800 p-2 rounded-lg backdrop-blur text-[10px] text-slate-400 pointer-events-none hidden flex-col items-end space-y-0.5">
+            <div>X: <span id="tilt-x" class="text-cyan-400 font-mono">0.0</span>°</div>
+            <div>Y: <span id="tilt-y" class="text-cyan-400 font-mono">0.0</span>°</div>
+        </div>
+    </main>
+
+    <!-- 弹窗层：iOS 重力感应授权提示 -->
+    <div id="permission-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-cyan-500/30 p-6 rounded-2xl max-w-xs w-full text-center neon-box-blue animate-pop">
+            <div class="w-16 h-16 bg-cyan-500/10 border border-cyan-400/40 rounded-full flex items-center justify-center mx-auto mb-4 text-cyan-400 text-2xl">
+                <i class="fa-solid fa-mobile-screen-button animate-bounce"></i>
+            </div>
+            <h2 class="text-xl font-bold mb-2 text-white">开启重力感应</h2>
+            <p class="text-xs text-slate-400 mb-6 leading-relaxed">
+                本游戏推荐通过倾斜手机控制小球。点击下方按钮授予设备倾斜传感器访问权限。
+            </p>
+            <button id="btn-request-motion" class="w-full py-3 rounded-xl font-bold text-white neon-button text-sm tracking-wide mb-3">
+                <i class="fa-solid fa-compass mr-1.5"></i> 授权重力感应
+            </button>
+            <button id="btn-skip-motion" class="text-xs text-slate-500 underline underline-offset-4 py-1">
+                跳过，使用屏幕触摸控制
+            </button>
+        </div>
+    </div>
+
+    <!-- 弹窗层：游戏开始/教程 -->
+    <div id="start-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-40 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-sm w-full text-center animate-pop">
+            <div class="w-14 h-14 bg-cyan-500/20 text-cyan-400 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl border border-cyan-500/30">
+                <i class="fa-solid fa-circle-dot"></i>
+            </div>
+            <h1 class="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 mb-1">
+                重力滚球历险记
+            </h1>
+            <p class="text-xs text-slate-400 mb-5">Neon Gravity Marble Adventure</p>
+            
+            <div class="space-y-2.5 text-left text-xs text-slate-300 mb-6 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+                <div class="flex items-center space-x-2.5">
+                    <span class="w-4 h-4 rounded-full bg-cyan-400/20 text-cyan-400 flex items-center justify-center text-[10px] font-bold">1</span>
+                    <span>倾斜手机或使用虚拟摇杆控制小球移动。</span>
+                </div>
+                <div class="flex items-center space-x-2.5">
+                    <span class="w-4 h-4 rounded-full bg-amber-400/20 text-amber-400 flex items-center justify-center text-[10px] font-bold">2</span>
+                    <span>收集所有金币 <i class="fa-solid fa-star text-amber-400"></i> 解锁终点传送门。</span>
+                </div>
+                <div class="flex items-center space-x-2.5">
+                    <span class="w-4 h-4 rounded-full bg-rose-400/20 text-rose-400 flex items-center justify-center text-[10px] font-bold">3</span>
+                    <span>避开黑洞陷阱 <i class="fa-solid fa-radiation text-rose-400"></i> 与红色激光墙。</span>
+                </div>
+            </div>
+
+            <button id="btn-start-game" class="w-full py-3.5 rounded-xl font-bold text-white neon-button text-sm tracking-wider">
+                开始挑战 <i class="fa-solid fa-play ml-1"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- 弹窗层：胜利/通关 -->
+    <div id="victory-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-40 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-emerald-500/30 p-6 rounded-2xl max-w-xs w-full text-center animate-pop">
+            <div class="w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-3 text-3xl border border-emerald-500/40">
+                <i class="fa-solid fa-trophy"></i>
+            </div>
+            <h2 id="victory-title" class="text-xl font-bold text-emerald-400 mb-1">关卡完成!</h2>
+            <p id="victory-subtitle" class="text-xs text-slate-400 mb-4">太棒了，完美通关！</p>
+            
+            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 mb-5 space-y-2 text-xs">
+                <div class="flex justify-between text-slate-400">
+                    <span>耗时:</span>
+                    <span id="stat-time" class="text-white font-mono font-bold">00:00.0</span>
+                </div>
+                <div class="flex justify-between text-slate-400">
+                    <span>收集金币:</span>
+                    <span id="stat-stars" class="text-amber-400 font-bold">3 / 3</span>
+                </div>
+            </div>
+
+            <button id="btn-next-level" class="w-full py-3 rounded-xl font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 shadow-lg shadow-emerald-500/30 text-sm mb-2">
+                下一关卡 <i class="fa-solid fa-arrow-right ml-1"></i>
+            </button>
+            <button id="btn-replay" class="w-full py-2.5 rounded-xl text-xs font-semibold text-slate-400 border border-slate-700 hover:bg-slate-800">
+                重新挑战
+            </button>
+        </div>
+    </div>
+
+    <!-- 弹窗层：失败重来 -->
+    <div id="gameover-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-40 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-rose-500/30 p-6 rounded-2xl max-w-xs w-full text-center animate-pop">
+            <div class="w-16 h-16 bg-rose-500/20 text-rose-400 rounded-full flex items-center justify-center mx-auto mb-3 text-3xl border border-rose-500/40">
+                <i class="fa-solid fa-skull-crossbones"></i>
+            </div>
+            <h2 class="text-xl font-bold text-rose-400 mb-1">挑战失败</h2>
+            <p class="text-xs text-slate-400 mb-5">小球坠入了黑洞中...</p>
+
+            <button id="btn-retry" class="w-full py-3 rounded-xl font-bold text-white bg-gradient-to-r from-rose-500 to-red-600 shadow-lg shadow-rose-500/30 text-sm">
+                重试关卡 <i class="fa-solid fa-rotate-right ml-1"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- 游戏脚本逻辑 -->
+    <script>
+        /**
+         * Web Audio API 声音合成引擎 (无依赖声音产生)
+         */
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+                this.isMuted = false;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContext) {
+                        this.ctx = new AudioContext();
+                    }
+                }
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            // 撞墙音效
+            playBounce(vol = 0.3) {
+                if (!this.ctx || this.isMuted) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.08);
+
+                gain.gain.setValueAtTime(vol * 0.4, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.08);
+            }
+
+            // 收集金币音效
+            playCoin() {
+                if (!this.ctx || this.isMuted) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(523.25, this.ctx.currentTime); // C5
+                osc.frequency.setValueAtTime(659.25, this.ctx.currentTime + 0.06); // E5
+                osc.frequency.setValueAtTime(783.99, this.ctx.currentTime + 0.12); // G5
+
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.25);
+            }
+
+            // 掉入黑洞/失败音效
+            playFail() {
+                if (!this.ctx || this.isMuted) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.4);
+
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.4);
+            }
+
+            // 通关音效
+            playWin() {
+                if (!this.ctx || this.isMuted) return;
+                const now = this.ctx.currentTime;
+                const notes = [440, 554.37, 659.25, 880]; // A4, C#5, E5, A5
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+                    gain.gain.setValueAtTime(0.2, now + idx * 0.08);
+                    gain.gain.linearRampToValueAtTime(0.01, now + idx * 0.08 + 0.2);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(now + idx * 0.08);
+                    osc.stop(now + idx * 0.08 + 0.2);
+                });
+            }
+        }
+
+        const sound = new SoundEngine();
+
+        // 触觉反馈震动
+        function triggerVibrate(ms = 30) {
+            if ('vibrate' in navigator) {
+                try { navigator.vibrate(ms); } catch(e) {}
+            }
+        }
+
+        /**
+         * 关卡地图定义
+         * 标度: 逻辑坐标基于 1000 x 1000 的相对网格，保证自适应全屏
+         */
+        const LEVEL_DATA = [
+            // Level 1: 新手教学关
+            {
+                id: 1,
+                name: "初露锋芒",
+                ballStart: { x: 150, y: 150 },
+                goal: { x: 850, y: 850, radius: 45 },
+                walls: [
+                    { x: 0, y: 0, w: 1000, h: 30 }, // 外框墙
+                    { x: 0, y: 970, w: 1000, h: 30 },
+                    { x: 0, y: 0, w: 30, h: 1000 },
+                    { x: 970, y: 0, w: 30, h: 1000 },
+                    { x: 350, y: 0, w: 40, h: 650 }, // 中间屏障
+                    { x: 650, y: 350, w: 40, h: 650 }
+                ],
+                blackHoles: [
+                    { x: 500, y: 800, r: 40 }
+                ],
+                coins: [
+                    { x: 200, y: 500, r: 20, collected: false },
+                    { x: 500, y: 200, r: 20, collected: false },
+                    { x: 800, y: 500, r: 20, collected: false }
+                ],
+                speedZones: []
+            },
+            // Level 2: 黑洞阵
+            {
+                id: 2,
+                name: "黑洞引力",
+                ballStart: { x: 120, y: 500 },
+                goal: { x: 880, y: 500, radius: 45 },
+                walls: [
+                    { x: 0, y: 0, w: 1000, h: 30 },
+                    { x: 0, y: 970, w: 1000, h: 30 },
+                    { x: 0, y: 0, w: 30, h: 1000 },
+                    { x: 970, y: 0, w: 30, h: 1000 },
+                    { x: 300, y: 200, w: 30, h: 600 },
+                    { x: 700, y: 200, w: 30, h: 600 }
+                ],
+                blackHoles: [
+                    { x: 500, y: 300, r: 45 },
+                    { x: 500, y: 500, r: 50 },
+                    { x: 500, y: 700, r: 45 },
+                ],
+                coins: [
+                    { x: 150, y: 200, r: 20, collected: false },
+                    { x: 500, y: 150, r: 20, collected: false },
+                    { x: 850, y: 800, r: 20, collected: false }
+                ],
+                speedZones: [
+                    { x: 100, y: 800, w: 150, h: 100, vx: 0, vy: -12 }
+                ]
+            },
+            // Level 3: 狭窄通路与加速带
+            {
+                id: 3,
+                name: "极速回廊",
+                ballStart: { x: 100, y: 100 },
+                goal: { x: 500, y: 500, radius: 45 },
+                walls: [
+                    { x: 0, y: 0, w: 1000, h: 30 },
+                    { x: 0, y: 970, w: 1000, h: 30 },
+                    { x: 0, y: 0, w: 30, h: 1000 },
+                    { x: 970, y: 0, w: 30, h: 1000 },
+                    // 回字形迷宫
+                    { x: 200, y: 200, w: 600, h: 30 },
+                    { x: 200, y: 770, w: 600, h: 30 },
+                    { x: 200, y: 200, w: 30, h: 400 },
+                    { x: 770, y: 400, w: 30, h: 400 },
+                ],
+                blackHoles: [
+                    { x: 880, y: 120, r: 45 },
+                    { x: 120, y: 880, r: 45 },
+                ],
+                coins: [
+                    { x: 880, y: 300, r: 20, collected: false },
+                    { x: 500, y: 880, r: 20, collected: false },
+                    { x: 120, y: 400, r: 20, collected: false },
+                    { x: 350, y: 350, r: 20, collected: false }
+                ],
+                speedZones: [
+                    { x: 30, y: 300, w: 150, h: 80, vx: 0, vy: -15 },
+                    { x: 820, y: 600, w: 150, h: 80, vx: 0, vy: 15 }
+                ]
+            },
+            // Level 4: 终极迷宫
+            {
+                id: 4,
+                name: "绝壁求生",
+                ballStart: { x: 100, y: 900 },
+                goal: { x: 900, y: 100, radius: 45 },
+                walls: [
+                    { x: 0, y: 0, w: 1000, h: 30 },
+                    { x: 0, y: 970, w: 1000, h: 30 },
+                    { x: 0, y: 0, w: 30, h: 1000 },
+                    { x: 970, y: 0, w: 30, h: 1000 },
+                    { x: 200, y: 0, w: 30, h: 700 },
+                    { x: 400, y: 300, w: 30, h: 700 },
+                    { x: 600, y: 0, w: 30, h: 700 },
+                    { x: 800, y: 300, w: 30, h: 700 }
+                ],
+                blackHoles: [
+                    { x: 115, y: 400, r: 40 },
+                    { x: 315, y: 500, r: 40 },
+                    { x: 515, y: 400, r: 40 },
+                    { x: 715, y: 500, r: 40 }
+                ],
+                coins: [
+                    { x: 100, y: 100, r: 20, collected: false },
+                    { x: 300, y: 900, r: 20, collected: false },
+                    { x: 500, y: 100, r: 20, collected: false },
+                    { x: 700, y: 900, r: 20, collected: false }
+                ],
+                speedZones: [
+                    { x: 230, y: 900, w: 170, h: 70, vx: 0, vy: -12 }
+                ]
+            }
+        ];
+
+        /**
+         * 游戏主控制逻辑类
+         */
+        class GravityGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                
+                // 状态变量
+                this.currentLevelIdx = 0;
+                this.level = null;
+                this.isPlaying = false;
+                this.isPaused = false;
+                this.useGyro = false; // 是否成功激活传感器
+
+                // 物理实体：小球
+                this.ball = {
+                    x: 0, y: 0,
+                    vx: 0, vy: 0,
+                    radius: 22,
+                    ax: 0, ay: 0,
+                    friction: 0.975, // 阻尼摩擦力
+                    bounce: 0.65     // 弹力系数
+                };
+
+                // 重力倾斜向量 (-1 到 1)
+                this.tilt = { x: 0, y: 0 };
+
+                // 虚拟摇杆控制变量
+                this.touchActive = false;
+                this.joystickPos = { x: 0, y: 0 };
+                this.joystickVector = { x: 0, y: 0 };
+
+                // 计时器与得分
+                this.startTime = 0;
+                this.elapsedMs = 0;
+                this.timerInterval = null;
+                this.collectedCoinsCount = 0;
+
+                this.initWindowResize();
+                this.bindEvents();
+            }
+
+            initWindowResize() {
+                const resize = () => {
+                    const dpr = window.devicePixelRatio || 1;
+                    this.rect = this.canvas.parentElement.getBoundingClientRect();
+                    this.canvas.width = this.rect.width * dpr;
+                    this.canvas.height = this.rect.height * dpr;
+                    this.ctx.scale(dpr, dpr);
+                };
+                window.addEventListener('resize', resize);
+                resize();
+            }
+
+            // 加载指定关卡
+            loadLevel(idx) {
+                this.currentLevelIdx = idx;
+                const template = LEVEL_DATA[idx];
+                
+                // 深拷贝关卡数据
+                this.level = JSON.parse(JSON.stringify(template));
+                
+                // 设置小球初始位置
+                this.ball.x = this.level.ballStart.x;
+                this.ball.y = this.level.ballStart.y;
+                this.ball.vx = 0;
+                this.ball.vy = 0;
+                this.ball.ax = 0;
+                this.ball.ay = 0;
+
+                this.collectedCoinsCount = 0;
+                this.elapsedMs = 0;
+
+                // 更新 UI 栏
+                document.getElementById('level-display').innerText = `STAGE ${this.level.id}: ${this.level.name}`;
+                this.updateScoreUI();
+                document.getElementById('timer-display').innerText = "00:00.0";
+            }
+
+            startTimer() {
+                this.stopTimer();
+                this.startTime = Date.now() - this.elapsedMs;
+                this.timerInterval = setInterval(() => {
+                    if (this.isPlaying && !this.isPaused) {
+                        this.elapsedMs = Date.now() - this.startTime;
+                        this.updateTimerUI();
+                    }
+                }, 50);
+            }
+
+            stopTimer() {
+                if (this.timerInterval) clearInterval(this.timerInterval);
+            }
+
+            updateTimerUI() {
+                const totalSec = this.elapsedMs / 1000;
+                const mins = Math.floor(totalSec / 60).toString().padStart(2, '0');
+                const secs = Math.floor(totalSec % 60).toString().padStart(2, '0');
+                const ms = Math.floor((totalSec % 1) * 10);
+                document.getElementById('timer-display').innerText = `${mins}:${secs}.${ms}`;
+            }
+
+            updateScoreUI() {
+                const total = this.level.coins.length;
+                document.getElementById('score-display').innerText = `${this.collectedCoinsCount}/${total}`;
+            }
+
+            // 事件监听绑定
+            bindEvents() {
+                // iOS 陀螺仪权限申请按钮
+                document.getElementById('btn-request-motion').addEventListener('click', () => {
+                    sound.init();
+                    this.requestDeviceMotionPermission();
+                });
+
+                document.getElementById('btn-skip-motion').addEventListener('click', () => {
+                    sound.init();
+                    document.getElementById('permission-modal').classList.add('hidden');
+                    document.getElementById('start-modal').classList.remove('hidden');
+                    this.enableJoystickUI(true);
+                });
+
+                // 界面 UI 交互按钮
+                document.getElementById('btn-start-game').addEventListener('click', () => {
+                    sound.init();
+                    document.getElementById('start-modal').classList.add('hidden');
+                    this.startGame();
+                });
+
+                document.getElementById('btn-pause').addEventListener('click', () => {
+                    if (!this.isPlaying) return;
+                    this.isPaused = !this.isPaused;
+                    document.getElementById('btn-pause').innerHTML = this.isPaused ? 
+                        '<i class="fa-solid fa-play text-xs"></i>' : '<i class="fa-solid fa-pause text-xs"></i>';
+                });
+
+                document.getElementById('btn-next-level').addEventListener('click', () => {
+                    document.getElementById('victory-modal').classList.add('hidden');
+                    if (this.currentLevelIdx + 1 < LEVEL_DATA.length) {
+                        this.loadLevel(this.currentLevelIdx + 1);
+                        this.startGame();
+                    } else {
+                        // 通关全关卡，重置到第一关
+                        this.loadLevel(0);
+                        this.startGame();
+                    }
+                });
+
+                document.getElementById('btn-replay').addEventListener('click', () => {
+                    document.getElementById('victory-modal').classList.add('hidden');
+                    this.loadLevel(this.currentLevelIdx);
+                    this.startGame();
+                });
+
+                document.getElementById('btn-retry').addEventListener('click', () => {
+                    document.getElementById('gameover-modal').classList.add('hidden');
+                    this.loadLevel(this.currentLevelIdx);
+                    this.startGame();
+                });
+
+                // 绑定虚拟摇杆/手势操作 (作为备用)
+                this.setupJoystickEvents();
+            }
+
+            // 传感器权限及倾斜监听
+            requestDeviceMotionPermission() {
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    // iOS 13+ 权限 API
+                    DeviceOrientationEvent.requestPermission()
+                        .then(response => {
+                            if (response === 'granted') {
+                                this.enableGyroscope();
+                            } else {
+                                alert('未获得重力感应权限，切换至屏幕摇杆模式。');
+                                this.enableJoystickUI(true);
+                            }
+                            document.getElementById('permission-modal').classList.add('hidden');
+                            document.getElementById('start-modal').classList.remove('hidden');
+                        })
+                        .catch(() => {
+                            this.enableJoystickUI(true);
+                            document.getElementById('permission-modal').classList.add('hidden');
+                            document.getElementById('start-modal').classList.remove('hidden');
+                        });
+                } else if ('DeviceOrientationEvent' in window) {
+                    // 通用 Android / 旧设备 API
+                    this.enableGyroscope();
+                    document.getElementById('permission-modal').classList.add('hidden');
+                    document.getElementById('start-modal').classList.remove('hidden');
+                } else {
+                    // 桌面端或不支持设备
+                    this.enableJoystickUI(true);
+                    document.getElementById('permission-modal').classList.add('hidden');
+                    document.getElementById('start-modal').classList.remove('hidden');
+                }
+            }
+
+            enableGyroscope() {
+                this.useGyro = true;
+                document.getElementById('tilt-indicator').classList.remove('hidden');
+                document.getElementById('tilt-indicator').classList.add('flex');
+
+                window.addEventListener('deviceorientation', (e) => {
+                    // beta: 前后倾斜 [-180, 180], gamma: 左右倾斜 [-90, 90]
+                    let gamma = e.gamma || 0; 
+                    let beta = e.beta || 0;
+
+                    // 限制倾斜角范围在 ±35 度以内，计算加速度分量
+                    const maxDegree = 35;
+                    const clampedGamma = Math.max(-maxDegree, Math.min(maxDegree, gamma));
+                    const clampedBeta = Math.max(-maxDegree, Math.min(maxDegree, beta));
+
+                    this.tilt.x = clampedGamma / maxDegree;
+                    this.tilt.y = clampedBeta / maxDegree;
+
+                    // 调试面板显示
+                    document.getElementById('tilt-x').innerText = clampedGamma.toFixed(1);
+                    document.getElementById('tilt-y').innerText = clampedBeta.toFixed(1);
+                }, true);
+            }
+
+            enableJoystickUI(show) {
+                const joystickEl = document.getElementById('joystick-container');
+                if (show) {
+                    joystickEl.classList.remove('hidden');
+                } else {
+                    joystickEl.classList.add('hidden');
+                }
+            }
+
+            setupJoystickEvents() {
+                const container = document.getElementById('joystick-container');
+                const stick = document.getElementById('joystick-stick');
+                let center = { x: 0, y: 0 };
+                const maxRadius = 40;
+
+                const handleStart = (clientX, clientY) => {
+                    this.touchActive = true;
+                    const rect = container.getBoundingClientRect();
+                    center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                    handleMove(clientX, clientY);
+                };
+
+                const handleMove = (clientX, clientY) => {
+                    if (!this.touchActive) return;
+                    const dx = clientX - center.x;
+                    const dy = clientY - center.y;
+                    const dist = Math.hypot(dx, dy);
+                    const angle = Math.atan2(dy, dx);
+
+                    const clampedDist = Math.min(dist, maxRadius);
+                    const stickX = Math.cos(angle) * clampedDist;
+                    const stickY = Math.sin(angle) * clampedDist;
+
+                    stick.style.transform = `translate(${stickX}px, ${stickY}px)`;
+
+                    // 归一化输入向量 (-1 到 1)
+                    this.joystickVector.x = stickX / maxRadius;
+                    this.joystickVector.y = stickY / maxRadius;
+                };
+
+                const handleEnd = () => {
+                    this.touchActive = false;
+                    stick.style.transform = `translate(0px, 0px)`;
+                    this.joystickVector = { x: 0, y: 0 };
+                };
+
+                // 触摸事件绑定
+                container.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    handleStart(e.touches[0].clientX, e.touches[0].clientY);
+                }, { passive: false });
+
+                window.addEventListener('touchmove', (e) => {
+                    if (this.touchActive) {
+                        handleMove(e.touches[0].clientX, e.touches[0].clientY);
+                    }
+                }, { passive: false });
+
+                window.addEventListener('touchend', handleEnd);
+
+                // 鼠标交互备用 (PC端调试)
+                container.addEventListener('mousedown', (e) => {
+                    handleStart(e.clientX, e.clientY);
+                });
+                window.addEventListener('mousemove', (e) => {
+                    if (this.touchActive) handleMove(e.clientX, e.clientY);
+                });
+                window.addEventListener('mouseup', handleEnd);
+            }
+
+            startGame() {
+                this.isPlaying = true;
+                this.isPaused = false;
+                this.startTimer();
+            }
+
+            // 物理引擎主更新循环
+            updatePhysics() {
+                if (!this.isPlaying || this.isPaused || !this.level) return;
+
+                // 1. 计算重力加速度
+                const accelFactor = 0.65;
+                if (this.useGyro) {
+                    this.ball.ax = this.tilt.x * accelFactor;
+                    this.ball.ay = this.tilt.y * accelFactor;
+                } else {
+                    // 使用虚拟摇杆输入
+                    this.ball.ax = this.joystickVector.x * accelFactor;
+                    this.ball.ay = this.joystickVector.y * accelFactor;
+                }
+
+                // 叠加速度与摩擦阻力
+                this.ball.vx += this.ball.ax;
+                this.ball.vy += this.ball.ay;
+                this.ball.vx *= this.ball.friction;
+                this.ball.vy *= this.ball.friction;
+
+                // 2. 检测加速带作用
+                this.level.speedZones.forEach(zone => {
+                    if (this.ball.x >= zone.x && this.ball.x <= zone.x + zone.w &&
+                        this.ball.y >= zone.y && this.ball.y <= zone.y + zone.h) {
+                        this.ball.vx += zone.vx * 0.1;
+                        this.ball.vy += zone.vy * 0.1;
+                    }
+                });
+
+                // 更新预测位置
+                let nextX = this.ball.x + this.ball.vx;
+                let nextY = this.ball.y + this.ball.vy;
+
+                // 3. 墙壁碰撞检测 & 响应 bounce
+                let bounced = false;
+                this.level.walls.forEach(wall => {
+                    // 找到距离小球中心最近的矩形墙壁点
+                    const closestX = Math.max(wall.x, Math.min(nextX, wall.x + wall.w));
+                    const closestY = Math.max(wall.y, Math.min(nextY, wall.y + wall.h));
+
+                    const distX = nextX - closestX;
+                    const distY = nextY - closestY;
+                    const distance = Math.hypot(distX, distY);
+
+                    if (distance < this.ball.radius) {
+                        bounced = true;
+                        // 计算碰撞法向量
+                        const overlap = this.ball.radius - distance;
+                        let nx = distX / (distance || 1);
+                        let ny = distY / (distance || 1);
+
+                        // 位置修正防止卡墙
+                        nextX += nx * overlap;
+                        nextY += ny * overlap;
+
+                        // 速度反弹
+                        const dot = this.ball.vx * nx + this.ball.vy * ny;
+                        this.ball.vx = (this.ball.vx - 2 * dot * nx) * this.ball.bounce;
+                        this.ball.vy = (this.ball.vy - 2 * dot * ny) * this.ball.bounce;
+                    }
+                });
+
+                if (bounced) {
+                    sound.playBounce(Math.hypot(this.ball.vx, this.ball.vy) / 10);
+                    triggerVibrate(15);
+                }
+
+                // 更新最终实际坐标
+                this.ball.x = nextX;
+                this.ball.y = nextY;
+
+                // 4. 金币收集检测
+                this.level.coins.forEach(coin => {
+                    if (!coin.collected) {
+                        const dist = Math.hypot(this.ball.x - coin.x, this.ball.y - coin.y);
+                        if (dist < this.ball.radius + coin.r) {
+                            coin.collected = true;
+                            this.collectedCoinsCount++;
+                            sound.playCoin();
+                            triggerVibrate(30);
+                            this.updateScoreUI();
+                        }
+                    }
+                });
+
+                // 5. 黑洞陷阱吸引力与掉落检测
+                this.level.blackHoles.forEach(hole => {
+                    const dist = Math.hypot(this.ball.x - hole.x, this.ball.y - hole.y);
+                    // 引力范围
+                    const pullRadius = hole.r * 2.2;
+                    if (dist < pullRadius) {
+                        // 产生向漩涡中心的吸力
+                        const angle = Math.atan2(hole.y - this.ball.y, hole.x - this.ball.x);
+                        const force = (1 - dist / pullRadius) * 0.45;
+                        this.ball.vx += Math.cos(angle) * force;
+                        this.ball.vy += Math.sin(angle) * force;
+                    }
+
+                    // 完全陷落判定
+                    if (dist < hole.r * 0.7) {
+                        this.handleGameOver();
+                    }
+                });
+
+                // 6. 终点目标检测 (需收集全部金币)
+                const goalDist = Math.hypot(this.ball.x - this.level.goal.x, this.ball.y - this.level.goal.y);
+                const allCoinsCollected = this.collectedCoinsCount >= this.level.coins.length;
+
+                if (goalDist < this.level.goal.radius && allCoinsCollected) {
+                    this.handleVictory();
+                }
+            }
+
+            handleGameOver() {
+                this.isPlaying = false;
+                this.stopTimer();
+                sound.playFail();
+                triggerVibrate([50, 100, 50]);
+                document.getElementById('gameover-modal').classList.remove('hidden');
+            }
+
+            handleVictory() {
+                this.isPlaying = false;
+                this.stopTimer();
+                sound.playWin();
+                triggerVibrate([40, 60, 40, 60, 100]);
+
+                document.getElementById('stat-time').innerText = document.getElementById('timer-display').innerText;
+                document.getElementById('stat-stars').innerText = `${this.collectedCoinsCount} / ${this.level.coins.length}`;
+
+                if (this.currentLevelIdx + 1 >= LEVEL_DATA.length) {
+                    document.getElementById('victory-title').innerText = "通关所有关卡!";
+                    document.getElementById('victory-subtitle').innerText = "恭喜你！你已解锁所有霓虹迷宫挑战！";
+                    document.getElementById('btn-next-level').innerHTML = '重新第一关 <i class="fa-solid fa-rotate-right ml-1"></i>';
+                } else {
+                    document.getElementById('victory-title').innerText = "关卡完成!";
+                    document.getElementById('victory-subtitle').innerText = "完美避开障碍，进入下一关！";
+                    document.getElementById('btn-next-level').innerHTML = '下一关卡 <i class="fa-solid fa-arrow-right ml-1"></i>';
+                }
+
+                document.getElementById('victory-modal').classList.remove('hidden');
+            }
+
+            // 渲染绘制主循环
+            render() {
+                const w = this.rect.width;
+                const h = this.rect.height;
+
+                // 逻辑基准分辨率 1000x1000 映射至实际 Canvas 大小
+                const scale = Math.min(w, h) / 1000;
+                const offsetX = (w - 1000 * scale) / 2;
+                const offsetY = (h - 1000 * scale) / 2;
+
+                this.ctx.save();
+                // 背景清屏
+                this.ctx.fillStyle = '#0b0f19';
+                this.ctx.fillRect(0, 0, w, h);
+
+                // 平移放缩绘制主区
+                this.ctx.translate(offsetX, offsetY);
+                this.ctx.scale(scale, scale);
+
+                // 绘制背景网格
+                this.ctx.strokeStyle = 'rgba(30, 41, 59, 0.5)';
+                this.ctx.lineWidth = 2;
+                for (let x = 0; x <= 1000; x += 100) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, 0);
+                    this.ctx.lineTo(x, 1000);
+                    this.ctx.stroke();
+                }
+                for (let y = 0; y <= 1000; y += 100) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, y);
+                    this.ctx.lineTo(1000, y);
+                    this.ctx.stroke();
+                }
+
+                if (this.level) {
+                    // 1. 绘制加速带
+                    this.level.speedZones.forEach(zone => {
+                        this.ctx.fillStyle = 'rgba(6, 182, 212, 0.15)';
+                        this.ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
+                        this.ctx.strokeStyle = '#06b6d4';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
+
+                        // 绘制箭头矢量示意
+                        this.ctx.fillStyle = '#22d3ee';
+                        this.ctx.font = 'bold 20px sans-serif';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText('▲', zone.x + zone.w / 2, zone.y + zone.h / 2 + 7);
+                    });
+
+                    // 2. 绘制障碍墙壁
+                    this.ctx.shadowColor = '#3b82f6';
+                    this.ctx.shadowBlur = 10;
+                    this.ctx.fillStyle = '#1e293b';
+                    this.ctx.strokeStyle = '#60a5fa';
+                    this.ctx.lineWidth = 4;
+                    this.level.walls.forEach(wall => {
+                        this.ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+                        this.ctx.strokeRect(wall.x, wall.y, wall.w, wall.h);
+                    });
+                    this.ctx.shadowBlur = 0; // 重置发光
+
+                    // 3. 绘制黑洞/危险陷阱
+                    const time = Date.now() * 0.003;
+                    this.level.blackHoles.forEach(hole => {
+                        this.ctx.save();
+                        this.ctx.translate(hole.x, hole.y);
+                        this.ctx.rotate(time);
+
+                        // 渐变黑洞
+                        const grad = this.ctx.createRadialGradient(0, 0, 5, 0, 0, hole.r);
+                        grad.addColorStop(0, '#000000');
+                        grad.addColorStop(0.7, '#881337');
+                        grad.addColorStop(1, '#f43f5e');
+
+                        this.ctx.fillStyle = grad;
+                        this.ctx.beginPath();
+                        this.ctx.arc(0, 0, hole.r, 0, Math.PI * 2);
+                        this.ctx.fill();
+
+                        // 旋转吸附外圈虚线
+                        this.ctx.strokeStyle = 'rgba(244, 63, 94, 0.6)';
+                        this.ctx.lineWidth = 3;
+                        this.ctx.setLineDash([8, 8]);
+                        this.ctx.beginPath();
+                        this.ctx.arc(0, 0, hole.r * 1.4, 0, Math.PI * 2);
+                        this.ctx.stroke();
+
+                        this.ctx.restore();
+                    });
+
+                    // 4. 绘制可收集金币/星星
+                    this.level.coins.forEach(coin => {
+                        if (!coin.collected) {
+                            this.ctx.save();
+                            this.ctx.shadowColor = '#fbbf24';
+                            this.ctx.shadowBlur = 12;
+                            this.ctx.fillStyle = '#fbbf24';
+                            this.ctx.beginPath();
+                            this.ctx.arc(coin.x, coin.y, coin.r, 0, Math.PI * 2);
+                            this.ctx.fill();
+
+                            // 内圈高光
+                            this.ctx.fillStyle = '#fffbeb';
+                            this.ctx.beginPath();
+                            this.ctx.arc(coin.x - 4, coin.y - 4, coin.r * 0.3, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            this.ctx.restore();
+                        }
+                    });
+
+                    // 5. 绘制终点漩涡
+                    const allCollected = this.collectedCoinsCount >= this.level.coins.length;
+                    this.ctx.save();
+                    this.ctx.translate(this.level.goal.x, this.level.goal.y);
+                    this.ctx.rotate(-time * 1.5);
+
+                    const goalColor = allCollected ? '#10b981' : '#64748b';
+                    this.ctx.shadowColor = goalColor;
+                    this.ctx.shadowBlur = allCollected ? 20 : 5;
+
+                    this.ctx.strokeStyle = goalColor;
+                    this.ctx.lineWidth = 6;
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, this.level.goal.radius, 0, Math.PI * 1.7);
+                    this.ctx.stroke();
+
+                    this.ctx.fillStyle = allCollected ? 'rgba(16, 185, 129, 0.2)' : 'rgba(100, 116, 139, 0.1)';
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, this.level.goal.radius * 0.7, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // 图标提示
+                    this.ctx.rotate(time * 1.5); // 恢复图标旋转
+                    this.ctx.fillStyle = goalColor;
+                    this.ctx.font = 'bold 22px sans-serif';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    this.ctx.fillText(allCollected ? 'GOAL' : 'LOCK', 0, 0);
+
+                    this.ctx.restore();
+
+                    // 6. 绘制重力小球 (Marble)
+                    this.ctx.save();
+                    this.ctx.shadowColor = '#38bdf8';
+                    this.ctx.shadowBlur = 15;
+
+                    // 小球立体球体渐变
+                    const ballGrad = this.ctx.createRadialGradient(
+                        this.ball.x - this.ball.radius * 0.3,
+                        this.ball.y - this.ball.radius * 0.3,
+                        this.ball.radius * 0.1,
+                        this.ball.x,
+                        this.ball.y,
+                        this.ball.radius
+                    );
+                    ballGrad.addColorStop(0, '#e0f2fe');
+                    ballGrad.addColorStop(0.3, '#38bdf8');
+                    ballGrad.addColorStop(1, '#0284c7');
+
+                    this.ctx.fillStyle = ballGrad;
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.ball.x, this.ball.y, this.ball.radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    this.ctx.restore();
+                }
+
+                this.ctx.restore();
+            }
+
+            // 循环入口
+            loop() {
+                this.updatePhysics();
+                this.render();
+                requestAnimationFrame(() => this.loop());
+            }
+        }
+
+        // 应用初始化
+        window.onload = () => {
+            const game = new GravityGame();
+            game.loadLevel(0);
+            game.loop();
+        };
+    </script>
+</body>
+</html>
